@@ -12,7 +12,7 @@ from typing import List, Dict, Optional, Union, Any
 # Third-party libraries
 import nest_asyncio
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from telethon import TelegramClient, functions, utils
 from telethon.sessions import StringSession
 from telethon.tl.types import (
@@ -415,6 +415,76 @@ async def list_messages(
     except Exception as e:
         return log_and_format_error("list_messages", e, chat_id=chat_id)
 
+
+@mcp.tool()
+async def retrive_messages_by_date_range(
+    chat_id: int,
+    search_query: str = None,
+    from_date: str = None,
+    to_date: str = None,
+) -> list:
+    """
+    Retrieve messages with optional filters.
+
+    Args:
+        chat_id: The ID of the chat to get messages from.
+        search_query: Filter messages containing this text.
+        from_date: Filter messages starting from this date (format: YYYY-MM-DD).
+        to_date: Filter messages until this date (format: YYYY-MM-DD).
+    """
+    try:
+        entity = await client.get_entity(chat_id)
+
+        # Parse date filters (from_date and to_date are always provided)
+        try:
+            from_date_obj = datetime.strptime(from_date, "%Y-%m-%d")
+            # Make it timezone aware by adding UTC timezone info
+            try:
+                # For Python 3.9+
+                from_date_obj = from_date_obj.replace(tzinfo=datetime.timezone.utc)
+            except AttributeError:
+                # For Python 3.13+
+                from datetime import timezone
+                from_date_obj = from_date_obj.replace(tzinfo=timezone.utc)
+        except ValueError:
+            logger.exception("Parsing from_date failed")
+            return ["Parsing from_date failed"]
+
+        try:
+            to_date_obj = datetime.strptime(to_date, "%Y-%m-%d")
+            # Set to end of day and make timezone aware
+            to_date_obj = to_date_obj + timedelta(days=1, microseconds=-1)
+            # Add timezone info
+            try:
+                to_date_obj = to_date_obj.replace(tzinfo=datetime.timezone.utc)
+            except AttributeError:
+                from datetime import timezone
+                to_date_obj = to_date_obj.replace(tzinfo=timezone.utc)
+        except ValueError:
+            logger.exception("Parsing to_date failed")
+            return ["Parsing to_date failed"]
+
+        messages = []
+        async for msg in client.iter_messages(entity, offset_date=from_date_obj, search=search_query, reverse=True):
+            logger.info(f"Processing message: {msg}")
+            msg_date = msg.date.astimezone(timezone.utc)
+            if msg_date > to_date_obj:
+                logger.info(f"Reached start date, stopping scrape")
+                break
+            messages.append({
+                "id": msg.id,
+                "date": msg.date.isoformat(),
+                "text": msg.message or "",
+                "sender_id": getattr(msg.sender, "id", None) if msg.sender else None,
+                "sender_name": getattr(msg.sender, "first_name", None) if msg.sender else None,
+                'views': getattr(msg, 'views', 0),
+                "from_date": from_date_obj,
+                "to_date": to_date_obj
+            })
+        return messages
+    except Exception as e:
+        logger.exception("retrive_messages_by_date_range failed")
+        return ["retrive_messages_by_date_range failed"]
 
 @mcp.tool()
 async def list_chats(chat_type: str = None, limit: int = 20) -> str:
@@ -2438,7 +2508,6 @@ async def get_pinned_messages(chat_id: int) -> str:
 
 
 if __name__ == "__main__":
-    nest_asyncio.apply()
 
     async def main() -> None:
         try:
