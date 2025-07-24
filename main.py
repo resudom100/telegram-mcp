@@ -465,10 +465,10 @@ async def retrive_messages_by_date_range(
             return ["Parsing to_date failed"]
 
         messages = []
-        async for msg in client.iter_messages(entity, offset_date=from_date_obj, search=search_query, reverse=True):
+        async for msg in client.iter_messages(entity, offset_date=to_date_obj, search=search_query):
             logger.info(f"Processing message: {msg}")
             msg_date = msg.date.astimezone(timezone.utc)
-            if msg_date > to_date_obj:
+            if msg_date < from_date_obj:
                 logger.info(f"Reached start date, stopping scrape")
                 break
             messages.append({
