@@ -60,6 +60,7 @@ This MCP server exposes a huge suite of Telegram tools. **Every major Telegram/T
 ### Messaging
 - **get_messages(chat_id, page, page_size)**: Paginated messages
 - **list_messages(chat_id, limit, search_query, from_date, to_date)**: Filtered messages
+- **retrive_messages_by_date_range(chat_id, search_query, from_date, to_date)**: Retrieve messages by date range with structured output
 - **send_message(chat_id, message)**: Send a message
 - **reply_to_message(chat_id, message_id, text)**: Reply to a message
 - **edit_message(chat_id, message_id, new_text)**: Edit your message
@@ -500,6 +501,106 @@ Example output:
 Chat ID: 123456789, Contact: John Smith, Username: @johnsmith, Unread: 3
 ```
 
+### Retrieving Messages by Date Range
+
+```python
+@mcp.tool()
+async def retrive_messages_by_date_range(
+    chat_id: int,
+    search_query: str = None,
+    from_date: str = None,
+    to_date: str = None,
+) -> list:
+    """
+    Retrieve messages with optional filters.
+
+    Args:
+        chat_id: The ID of the chat to get messages from.
+        search_query: Filter messages containing this text.
+        from_date: Filter messages starting from this date (format: YYYY-MM-DD).
+        to_date: Filter messages until this date (format: YYYY-MM-DD).
+    """
+    try:
+        entity = await client.get_entity(chat_id)
+
+        # Parse date filters (from_date and to_date are always provided)
+        try:
+            from_date_obj = datetime.strptime(from_date, "%Y-%m-%d")
+            # Make it timezone aware by adding UTC timezone info
+            try:
+                # For Python 3.9+
+                from_date_obj = from_date_obj.replace(tzinfo=datetime.timezone.utc)
+            except AttributeError:
+                # For Python 3.13+
+                from datetime import timezone
+                from_date_obj = from_date_obj.replace(tzinfo=timezone.utc)
+        except ValueError:
+            logger.exception("Parsing from_date failed")
+            return ["Parsing from_date failed"]
+
+        try:
+            to_date_obj = datetime.strptime(to_date, "%Y-%m-%d")
+            # Set to end of day and make timezone aware
+            to_date_obj = to_date_obj + timedelta(days=1, microseconds=-1)
+            # Add timezone info
+            try:
+                to_date_obj = to_date_obj.replace(tzinfo=datetime.timezone.utc)
+            except AttributeError:
+                from datetime import timezone
+                to_date_obj = to_date_obj.replace(tzinfo=timezone.utc)
+        except ValueError:
+            logger.exception("Parsing to_date failed")
+            return ["Parsing to_date failed"]
+
+        messages = []
+        async for msg in client.iter_messages(entity, offset_date=to_date_obj, search=search_query):
+            logger.info(f"Processing message: {msg}")
+            msg_date = msg.date.astimezone(timezone.utc)
+            if msg_date < from_date_obj:
+                logger.info(f"Reached start date, stopping scrape")
+                break
+            messages.append({
+                "id": msg.id,
+                "date": msg.date.isoformat(),
+                "text": msg.message or "",
+                "sender_id": getattr(msg.sender, "id", None) if msg.sender else None,
+                "sender_name": getattr(msg.sender, "first_name", None) if msg.sender else None,
+                'views': getattr(msg, 'views', 0),
+                "from_date": from_date_obj,
+                "to_date": to_date_obj
+            })
+        return messages
+    except Exception as e:
+        logger.exception("retrive_messages_by_date_range failed")
+        return ["retrive_messages_by_date_range failed"]
+```
+
+Example output:
+```json
+[
+  {
+    "id": 123,
+    "date": "2024-01-15T10:30:00+00:00",
+    "text": "Hello everyone!",
+    "sender_id": 456789,
+    "sender_name": "John Doe",
+    "views": 5,
+    "from_date": "2024-01-01T00:00:00+00:00",
+    "to_date": "2024-01-31T23:59:59+00:00"
+  },
+  {
+    "id": 124,
+    "date": "2024-01-15T11:45:00+00:00",
+    "text": "How's the project going?",
+    "sender_id": 456789,
+    "sender_name": "John Doe",
+    "views": 3,
+    "from_date": "2024-01-01T00:00:00+00:00",
+    "to_date": "2024-01-31T23:59:59+00:00"
+  }
+]
+```
+
 ---
 
 ## 🎮 Usage Examples
@@ -515,6 +616,8 @@ Chat ID: 123456789, Contact: John Smith, Username: @johnsmith, Unread: 3
 - "Join the Telegram group with invite link https://t.me/+AbCdEfGhIjK"
 - "Send a sticker to my Saved Messages"
 - "Get all my sticker sets"
+- "Retrieve messages from chat 123456789 between 2024-01-01 and 2024-01-31"
+- "Get messages containing 'project' from chat 123456789 from 2024-01-01 to 2024-01-31"
 
 You can use these tools via natural language in Claude, Cursor, or any MCP-compatible client.
 
